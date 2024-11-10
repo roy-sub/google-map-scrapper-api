@@ -140,7 +140,7 @@ const scrapeAbout = async (inputUrl) => {
                 });
             }
         } catch (err) {
-            console.log("Error getting about section:", err.message);
+            console.log("Error getting about section:", err);
         }
 
         return {
