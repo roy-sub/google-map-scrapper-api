@@ -1,5 +1,5 @@
 const puppeteer = require("puppeteer");
-// require("dotenv").config();
+require("dotenv").config();
 
 const encodeUrl = async (url) => {
     // Use let instead of const for variables that will be modified
