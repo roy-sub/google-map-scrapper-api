@@ -197,14 +197,13 @@ const scrapePoi = async (inputUrl) => {
         // 11. Profile Photo
         let profilePictureUrl = '';
         try {
-            // Wait for the button first
-            await page.waitForSelector('button.aoRNLd[aria-label^="Photo of"]', { timeout: 30000 });
+            // Wait for the image within the button
+            await page.waitForSelector('button.aoRNLd img', { timeout: 30000 });
             
-            // Get the profile picture URL using a single evaluate call
+            // Get the profile picture URL directly from the img element within the button
             profilePictureUrl = await page.evaluate(() => {
-                const button = document.querySelector('button.aoRNLd[aria-label^="Photo of"]');
-                const img = button?.querySelector('img');
-                return img?.getAttribute('src') || '';
+                const img = document.querySelector('button.aoRNLd img');
+                return img ? img.getAttribute('src') : '';
             });
         } catch (err) {
             console.log("Error getting profile picture:", err.message);
