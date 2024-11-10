@@ -79,6 +79,9 @@ const scrapePoi_Debug = async (inputUrl) => {
         page.setDefaultNavigationTimeout(60000);
         page.setDefaultTimeout(60000);
 
+        // Enable console log from the page context
+        page.on('console', msg => console.log('Page Console:', msg.text()));
+
         // Optimize page performance
         await page.setRequestInterception(true);
         page.on('request', (request) => {
@@ -194,117 +197,113 @@ const scrapePoi_Debug = async (inputUrl) => {
             // No-op
         }
         
-        // 12. Scrape About Tab
+        // 12. Enhanced About Tab Scraping with Debugging
         let about = {};
         try {
-            console.log('Starting About tab scraping process...');
+            console.log('Starting About tab scraping process with enhanced debugging...');
             
-            // Wait for the About tab with increased timeout
+            // Inject debug logging functions into the page
+            await page.evaluate(() => {
+                const logDOMState = () => {
+                    console.log('DOM State Check:');
+                    console.log('About tab exists:', !!document.querySelector('button[aria-label^="About"][role="tab"]'));
+                    
+                    // Log all tab elements
+                    const tabs = document.querySelectorAll('[role="tab"]');
+                    console.log('Available tabs:', Array.from(tabs).map(tab => tab.getAttribute('aria-label')));
+                    
+                    // Check content visibility
+                    const aboutContent = document.querySelectorAll('div.iP2t7d');
+                    console.log('About content elements found:', aboutContent.length);
+                    console.log('About content visible:', Array.from(aboutContent).some(el => el.offsetParent !== null));
+                    
+                    // Log DOM structure
+                    console.log('Parent container structure:', 
+                        document.querySelector('button[aria-label^="About"]')?.closest('[role="tablist"]')?.innerHTML
+                    );
+                };
+
+                // Log initial state
+                console.log('Initial DOM state:');
+                logDOMState();
+
+                // Watch for DOM changes
+                const observer = new MutationObserver((mutations) => {
+                    console.log('DOM mutation detected:', mutations.length, 'changes');
+                    logDOMState();
+                });
+
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true
+                });
+            });
+
+            // Wait for About tab with debugging
             console.log('Attempting to locate About tab button...');
-            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { 
+            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', {
                 timeout: 30000,
-                visible: true 
+                visible: true
             });
             console.log('Successfully found About tab button');
-        
-            // Click the About tab and wait for navigation
+
+            // Enhanced click handling with multiple promises
             console.log('Attempting to click About tab...');
             try {
                 await Promise.all([
-                    aboutTab.click(),
-                    page.waitForTimeout(2000) // Give some time for content to load
+                    page.click('button[aria-label^="About"][role="tab"]'),
+                    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => {}),
+                    page.waitForResponse(response => response.url().includes('about')).catch(() => {})
                 ]);
-                console.log('Successfully clicked About tab and waited for timeout');
+                console.log('Successfully clicked About tab and waited for response');
             } catch (clickError) {
-                console.error('Error clicking About tab:', {
-                    message: clickError.message,
-                    stack: clickError.stack
-                });
-                throw clickError;
+                console.error('Error during About tab click:', clickError);
             }
-        
-            // Try multiple selectors for the About section
-            const aboutSelectors = [
-                'div[aria-label^="About"]',
-                'div.iP2t7d.fontBodyMedium',
-                'div[role="tabpanel"][aria-label^="About"]'
-            ];
-            
-            console.log('Attempting to find About section using multiple selectors:', aboutSelectors);
-            
-            let aboutSection = null;
-            let successfulSelector = null;
-            
-            for (const selector of aboutSelectors) {
-                try {
-                    console.log(`Trying selector: ${selector}`);
-                    aboutSection = await page.waitForSelector(selector, { 
-                        timeout: 20000,
-                        visible: true 
+
+            // Wait for content with debugging
+            console.log('Waiting for About content to load...');
+            await page.waitForFunction(() => {
+                const selectors = [
+                    'div[aria-label^="About"]',
+                    'div.iP2t7d.fontBodyMedium',
+                    'div[role="tabpanel"][aria-label^="About"]'
+                ];
+                return selectors.some(selector => document.querySelector(selector));
+            }, { timeout: 30000 });
+
+            // Extract content with debugging
+            const subsections = await page.evaluate(() => {
+                console.log('Starting content extraction...');
+                const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
+                console.log(`Found ${sections.length} subsections`);
+                
+                return Array.from(sections).map((section, index) => {
+                    const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
+                    const items = Array.from(section.querySelectorAll('li.hpLkke span'));
+                    
+                    const result = {
+                        title: titleElement?.textContent || '',
+                        items: items.map(item => item.textContent || '').filter(Boolean)
+                    };
+                    
+                    console.log(`Processed subsection ${index}:`, {
+                        title: result.title,
+                        itemCount: result.items.length
                     });
-                    if (aboutSection) {
-                        successfulSelector = selector;
-                        console.log(`Successfully found About section using selector: ${selector}`);
-                        break;
-                    }
-                } catch (selectorError) {
-                    console.log(`Selector "${selector}" failed:`, {
-                        message: selectorError.message,
-                        stack: selectorError.stack
-                    });
-                    continue;
+                    
+                    return result;
+                }).filter(section => section.title && section.items.length > 0);
+            });
+
+            // Process extracted content
+            subsections.forEach(({ title, items }) => {
+                if (title && items.length > 0) {
+                    console.log(`Adding subsection: ${title} with ${items.length} items`);
+                    about[title] = items;
                 }
-            }
-        
-            if (!aboutSection) {
-                console.error('Failed to find About section with any selector');
-                throw new Error('No valid About section selector found');
-            }
-        
-            if (aboutSection) {
-                console.log('Beginning content extraction from About section...');
-                
-                // Use a single evaluate call to get all subsections
-                const subsections = await page.evaluate(() => {
-                    console.log('Starting client-side evaluation...');
-                    
-                    const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
-                    console.log(`Found ${sections.length} potential subsections`);
-                    
-                    return Array.from(sections).map((section, index) => {
-                        const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                        const items = Array.from(section.querySelectorAll('li.hpLkke span'));
-                        
-                        const result = {
-                            title: titleElement?.textContent || '',
-                            items: items.map(item => item.textContent || '').filter(Boolean)
-                        };
-                        
-                        console.log(`Processed subsection ${index}:`, {
-                            title: result.title,
-                            itemCount: result.items.length
-                        });
-                        
-                        return result;
-                    }).filter(section => section.title && section.items.length > 0);
-                });
-        
-                console.log(`Successfully extracted ${subsections.length} subsections`);
-                
-                subsections.forEach(({ title, items }) => {
-                    if (title && items.length > 0) {
-                        console.log(`Adding subsection to about object: ${title} with ${items.length} items`);
-                        about[title] = items;
-                    } else {
-                        console.log(`Skipping invalid subsection:`, { title, itemCount: items.length });
-                    }
-                });
-                
-                console.log('Final about object structure:', {
-                    sectionCount: Object.keys(about).length,
-                    sections: Object.keys(about)
-                });
-            }
+            });
+
         } catch (err) {
             console.error('Critical error in About section scraping:', {
                 message: err.message,
@@ -314,6 +313,7 @@ const scrapePoi_Debug = async (inputUrl) => {
                 timestamp: new Date().toISOString()
             });
         }
+
         return {
             url,
             title: titleName,
