@@ -4,12 +4,11 @@ require("dotenv").config();
 const encodeUrl = async (url) => {
     let baseUrl, query;
     [baseUrl, query] = url.split('?');
-    
+
     let beforeData, dataPart;
     [beforeData, dataPart] = baseUrl.split('/data=');
 
     let parts = beforeData.split('/place/', 2);
-
     if (parts.length === 2) {
         const placeParts = parts[1].split('/', 2);
         placeParts[0] = placeParts[0].replace(/ /g, '+');
@@ -52,11 +51,9 @@ const scrapeAbout2 = async (inputUrl) => {
 
         const page = await browser.newPage();
         
-        // Set longer timeouts
         page.setDefaultNavigationTimeout(60000);
         page.setDefaultTimeout(60000);
 
-        // Optimize page performance
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             const blockedResources = ['image', 'stylesheet', 'font', 'media'];
@@ -67,45 +64,44 @@ const scrapeAbout2 = async (inputUrl) => {
             }
         });
 
-        // Retry mechanism for navigation
+        console.log("Navigating to the page...");
         let retries = 3;
         while (retries > 0) {
             try {
                 await page.goto(url, { 
-                    waitUntil: "networkidle0",
+                    waitUntil: "networkidle2",
                     timeout: 60000 
                 });
+                console.log("Page loaded successfully");
                 break;
             } catch (error) {
                 retries--;
-                if (retries === 0) throw error;
                 console.log(`Retrying navigation... ${retries} attempts left`);
+                if (retries === 0) throw error;
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
-        
-        // Scrape About Tab
+
+        console.log("Looking for the About tab...");
         let about = {};
         try {
-            // Wait for the About tab
             const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { 
                 timeout: 30000,
                 visible: true 
             });
-        
-            // Click the About tab and wait briefly
+
             await Promise.all([
                 aboutTab.click(),
-                page.waitForTimeout(2000) // Wait for content to load
+                page.waitForTimeout(3000)
             ]);
-        
-            // Try multiple selectors for the About section
+            console.log("Clicked the About tab");
+
             const aboutSelectors = [
                 'div[aria-label^="About"]',
                 'div.iP2t7d.fontBodyMedium',
                 'div[role="region"][aria-label^="About"]'
             ];
-        
+
             let aboutSection = null;
             for (const selector of aboutSelectors) {
                 try {
@@ -115,12 +111,13 @@ const scrapeAbout2 = async (inputUrl) => {
                     });
                     if (aboutSection) break;
                 } catch (err) {
+                    console.log(`Selector ${selector} not found, trying next...`);
                     continue;
                 }
             }
-        
+
             if (aboutSection) {
-                // Capture subsections in the About section
+                console.log("Extracting About section content...");
                 const subsections = await page.evaluate(() => {
                     const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
                     return Array.from(sections).map(section => {
@@ -132,26 +129,29 @@ const scrapeAbout2 = async (inputUrl) => {
                         };
                     }).filter(section => section.title && section.items.length > 0);
                 });
-        
+
                 subsections.forEach(({ title, items }) => {
                     if (title && items.length > 0) {
                         about[title] = items;
                     }
                 });
+                console.log("Content extracted successfully");
+            } else {
+                console.log("About section not found on page.");
             }
         } catch (err) {
-            console.log("Error getting about section:", err);
+            console.log("Error in the About tab selection or extraction:", err);
         }
 
-        return {
-            about
-        };
+        return { about };
     } catch (error) {
-        throw new Error(`Error scraping POI data: ${error.message}`);
+        console.error(`Error scraping data: ${error.message}`);
+        return { error: error.message };
     } finally {
         if (browser) {
             try {
                 await browser.close();
+                console.log("Browser closed");
             } catch (error) {
                 console.error("Error closing browser:", error);
             }
