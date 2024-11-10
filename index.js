@@ -1,8 +1,7 @@
 const express = require("express");
 const { scrapeGoogleMapsTitlesAndHref } = require("./scraper");
 const { scrapePoi } = require("./scraper_profile");
-const { scrapeAbout } = require("./scraper_about");
-const { scrapeAbout2 } = require("./scraper_about2");
+const { scrapePoi_Debug } = require("./scraper_profile_debugt");
 const app = express();
 
 const PORT = process.env.PORT || 4000;
@@ -48,22 +47,7 @@ app.get("/about", async (req, res) => {
       return res.status(400).send("Error: input url is required");
     }
 
-    const data = await scrapeAbout(url);
-    res.json(data);
-  } catch (error) {
-    const errorMessage = `Error: ${error.message}`;
-    res.status(500).send(errorMessage);
-  }
-});
-
-app.get("/about2", async (req, res) => {
-  try {
-    const url = req.query.url;
-    if (!url) {
-      return res.status(400).send("Error: input url is required");
-    }
-
-    const data = await scrapeAbout2(url);
+    const data = await scrapePoi_Debug(url);
     res.json(data);
   } catch (error) {
     const errorMessage = `Error: ${error.message}`;
