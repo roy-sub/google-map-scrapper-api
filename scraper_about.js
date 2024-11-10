@@ -47,16 +47,20 @@ const scrapeAbout = async (inputUrl) => {
                 process.env.NODE_ENV === "production"
                     ? process.env.PUPPETEER_EXECUTABLE_PATH
                     : puppeteer.executablePath(),
+            headless: "new",  // Added this for better stability
             timeout: 60000,
         });
 
         const page = await browser.newPage();
         
-        // Set longer timeouts
+        // Increase timeouts
         page.setDefaultNavigationTimeout(60000);
         page.setDefaultTimeout(60000);
 
-        // Optimize page performance
+        // Enable console logs from the page
+        page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+
+        // Optimize performance
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             const blockedResources = ['image', 'stylesheet', 'font', 'media'];
@@ -67,7 +71,7 @@ const scrapeAbout = async (inputUrl) => {
             }
         });
 
-        // Add retry mechanism for navigation
+        // Navigate with retries
         let retries = 3;
         while (retries > 0) {
             try {
@@ -77,76 +81,74 @@ const scrapeAbout = async (inputUrl) => {
                 });
                 break;
             } catch (error) {
+                console.log(`Navigation error: ${error.message}`);
                 retries--;
                 if (retries === 0) throw error;
                 console.log(`Retrying navigation... ${retries} attempts left`);
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
-        
+
         // Scrape About Tab
         let about = {};
         try {
-            // Wait for the About tab with increased timeout
-            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { 
-                timeout: 30000,
-                visible: true 
-            });
-        
-            // Click the About tab and wait for navigation
+            // Wait for tab to be ready
+            await page.waitForFunction(
+                () => document.querySelector('button[aria-label^="About"][role="tab"]') !== null,
+                { timeout: 30000 }
+            );
+
+            // Click the About tab and wait for content
             await Promise.all([
-                aboutTab.click(),
-                page.waitForTimeout(2000) // Give some time for content to load
+                page.click('button[aria-label^="About"][role="tab"]'),
+                page.waitForTimeout(3000)  // Increased wait time
             ]);
-        
-            // Try multiple selectors for the About section
-            const aboutSelectors = [
-                'div[aria-label^="About"]',
-                'div.iP2t7d.fontBodyMedium',
-                'div[role="tabpanel"][aria-label^="About"]'
-            ];
-        
-            let aboutSection = null;
-            for (const selector of aboutSelectors) {
-                try {
-                    aboutSection = await page.waitForSelector(selector, { 
-                        timeout: 20000,
-                        visible: true 
-                    });
-                    if (aboutSection) break;
-                } catch (err) {
-                    continue;
+
+            // Verify the tab switch
+            await page.waitForFunction(
+                () => document.querySelector('div[role="tabpanel"][aria-label^="About"]') !== null,
+                { timeout: 20000 }
+            );
+
+            // Extract data using evaluate for better performance
+            const subsections = await page.evaluate(() => {
+                const sections = Array.from(document.querySelectorAll('div.iP2t7d.fontBodyMedium'));
+                return sections.map(section => {
+                    const titleEl = section.querySelector('h2.iL3Qke.fontTitleSmall');
+                    const items = Array.from(section.querySelectorAll('li.hpLkke span'));
+                    
+                    return {
+                        title: titleEl ? titleEl.textContent.trim() : '',
+                        items: items
+                            .map(item => item.textContent.trim())
+                            .filter(text => text.length > 0)
+                    };
+                }).filter(section => section.title && section.items.length > 0);
+            });
+
+            // Process the results
+            subsections.forEach(({ title, items }) => {
+                if (title && items.length > 0) {
+                    about[title] = items;
                 }
+            });
+
+            // Log the results for debugging
+            console.log('Scraped data:', JSON.stringify(about, null, 2));
+
+            if (Object.keys(about).length === 0) {
+                console.log('Warning: No data was scraped');
             }
-        
-            if (aboutSection) {
-                // Use a single evaluate call to get all subsections
-                const subsections = await page.evaluate(() => {
-                    const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
-                    return Array.from(sections).map(section => {
-                        const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                        const items = Array.from(section.querySelectorAll('li.hpLkke span'));
-                        return {
-                            title: titleElement?.textContent || '',
-                            items: items.map(item => item.textContent || '').filter(Boolean)
-                        };
-                    }).filter(section => section.title && section.items.length > 0);
-                });
-        
-                subsections.forEach(({ title, items }) => {
-                    if (title && items.length > 0) {
-                        about[title] = items;
-                    }
-                });
-            }
+
         } catch (err) {
-            console.log("Error getting about section:", err);
+            console.error("Error in about section scraping:", err);
+            throw err;  // Rethrow to trigger retry if needed
         }
 
-        return {
-            about
-        };
+        return { about };
+
     } catch (error) {
+        console.error(`Scraping error: ${error.message}`);
         throw new Error(`Error scraping POI data: ${error.message}`);
     } finally {
         if (browser) {
