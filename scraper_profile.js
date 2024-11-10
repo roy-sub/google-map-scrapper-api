@@ -201,7 +201,7 @@ const scrapePoi = async (inputUrl) => {
             const imgElement = await profilePictureButton.$('img');
             profilePictureUrl = await page.evaluate((el) => el.getAttribute('src'), imgElement);
         } catch (err) {
-            // No-op
+            console.log("Error getting profile picture:", err.message);
         }
 
         // 12. Scrape About Tab
@@ -225,7 +225,7 @@ const scrapePoi = async (inputUrl) => {
                 about[title] = items;
             });
         } catch (err) {
-            // No-op
+            console.log("Error getting about section:", err.message);
         }
 
         return {
