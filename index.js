@@ -1,7 +1,7 @@
 const express = require("express");
 const { scrapeGoogleMapsTitlesAndHref } = require("./scraper");
 const { scrapePoi } = require("./scraper_profile");
-const { scrapePoi_Debug } = require("./scraper_profile_debugt");
+const { scrapePoi_Debug } = require("./scraper_profile_debug");
 const app = express();
 
 const PORT = process.env.PORT || 4000;
