@@ -197,33 +197,74 @@ const scrapePoi = async (inputUrl) => {
         // 11. Profile Photo
         let profilePictureUrl = '';
         try {
-            const profilePictureButton = await page.$('button.aoRNLd[aria-label^="Photo of"]');
-            const imgElement = await profilePictureButton.$('img');
-            profilePictureUrl = await page.evaluate((el) => el.getAttribute('src'), imgElement);
+            // Wait for the button first
+            await page.waitForSelector('button.aoRNLd[aria-label^="Photo of"]', { timeout: 30000 });
+            
+            // Get the profile picture URL using a single evaluate call
+            profilePictureUrl = await page.evaluate(() => {
+                const button = document.querySelector('button.aoRNLd[aria-label^="Photo of"]');
+                const img = button?.querySelector('img');
+                return img?.getAttribute('src') || '';
+            });
         } catch (err) {
             console.log("Error getting profile picture:", err.message);
         }
-
+        
         // 12. Scrape About Tab
         let about = {};
         try {
-            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { timeout: 10000 });
-            await aboutTab.click();
-
-            await page.waitForSelector('div[aria-label^="About"]', { timeout: 10000 });
-
-            const aboutSection = await page.$('div[aria-label^="About"]');
-
-            const subsections = await aboutSection.$$eval('div.iP2t7d.fontBodyMedium', (els) =>
-                els.map((el) => ({
-                    title: el.querySelector('h2.iL3Qke.fontTitleSmall').textContent,
-                    items: Array.from(el.querySelectorAll('li.hpLkke span')).map((i) => i.textContent)
-                }))
-            );
-
-            subsections.forEach(({ title, items }) => {
-                about[title] = items;
+            // Wait for the About tab with increased timeout
+            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { 
+                timeout: 30000,
+                visible: true 
             });
+        
+            // Click the About tab and wait for navigation
+            await Promise.all([
+                aboutTab.click(),
+                page.waitForTimeout(2000) // Give some time for content to load
+            ]);
+        
+            // Try multiple selectors for the About section
+            const aboutSelectors = [
+                'div[aria-label^="About"]',
+                'div.iP2t7d.fontBodyMedium',
+                'div[role="tabpanel"][aria-label^="About"]'
+            ];
+        
+            let aboutSection = null;
+            for (const selector of aboutSelectors) {
+                try {
+                    aboutSection = await page.waitForSelector(selector, { 
+                        timeout: 20000,
+                        visible: true 
+                    });
+                    if (aboutSection) break;
+                } catch (err) {
+                    continue;
+                }
+            }
+        
+            if (aboutSection) {
+                // Use a single evaluate call to get all subsections
+                const subsections = await page.evaluate(() => {
+                    const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
+                    return Array.from(sections).map(section => {
+                        const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
+                        const items = Array.from(section.querySelectorAll('li.hpLkke span'));
+                        return {
+                            title: titleElement?.textContent || '',
+                            items: items.map(item => item.textContent || '').filter(Boolean)
+                        };
+                    }).filter(section => section.title && section.items.length > 0);
+                });
+        
+                subsections.forEach(({ title, items }) => {
+                    if (title && items.length > 0) {
+                        about[title] = items;
+                    }
+                });
+            }
         } catch (err) {
             console.log("Error getting about section:", err.message);
         }
