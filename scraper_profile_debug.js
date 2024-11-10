@@ -193,26 +193,6 @@ const scrapePoi_Debug = async (inputUrl) => {
         } catch (err) {
             // No-op
         }
-
-        // 11. Profile Photo
-        let profilePictureUrl = '';
-        try {
-            // Wait for button using a single class name
-            await page.waitForSelector('button.aoRNLd', { timeout: 30000 });
-            
-            // Get the profile picture URL
-            profilePictureUrl = await page.evaluate(() => {
-                const button = document.querySelector('button.aoRNLd');
-                if (!button) return '';
-                
-                const img = button.querySelector('img');
-                if (!img) return '';
-                
-                return img.src || '';
-            });
-        } catch (err) {
-            console.log("Error getting profile picture:", err.message);
-        }
         
         // 12. Scrape About Tab
         let about = {};
@@ -346,7 +326,6 @@ const scrapePoi_Debug = async (inputUrl) => {
             websiteLink,
             phoneNumber,
             reviews,
-            profilePictureUrl,
             about
         };
     } catch (error) {
