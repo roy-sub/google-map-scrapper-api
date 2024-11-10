@@ -197,13 +197,18 @@ const scrapePoi = async (inputUrl) => {
         // 11. Profile Photo
         let profilePictureUrl = '';
         try {
-            // Wait for the image within the button
-            await page.waitForSelector('button.aoRNLd img', { timeout: 30000 });
+            // Wait for the button with multiple classes
+            await page.waitForSelector('button.aoRNLd.kn2E5e.NMjTrf.lvtCsd', { timeout: 30000 });
             
-            // Get the profile picture URL directly from the img element within the button
+            // Get the profile picture URL using a more specific evaluate call
             profilePictureUrl = await page.evaluate(() => {
-                const img = document.querySelector('button.aoRNLd img');
-                return img ? img.getAttribute('src') : '';
+                const button = document.querySelector('button.aoRNLd.kn2E5e.NMjTrf.lvtCsd');
+                if (!button) return '';
+                
+                const img = button.querySelector('img');
+                if (!img) return '';
+                
+                return img.src || '';
             });
         } catch (err) {
             console.log("Error getting profile picture:", err.message);
