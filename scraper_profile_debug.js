@@ -198,122 +198,99 @@ const scrapePoi_Debug = async (inputUrl) => {
         }
         
         // 12. Enhanced About Tab Scraping with Debugging
+        // Replace the About tab scraping section with this updated version
         let about = {};
         try {
-            console.log('Starting About tab scraping process with enhanced debugging...');
+            console.log('Starting About tab scraping process...');
             
-            // Inject debug logging functions into the page
-            await page.evaluate(() => {
-                const logDOMState = () => {
-                    console.log('DOM State Check:');
-                    console.log('About tab exists:', !!document.querySelector('button[aria-label^="About"][role="tab"]'));
-                    
-                    // Log all tab elements
-                    const tabs = document.querySelectorAll('[role="tab"]');
-                    console.log('Available tabs:', Array.from(tabs).map(tab => tab.getAttribute('aria-label')));
-                    
-                    // Check content visibility
-                    const aboutContent = document.querySelectorAll('div.iP2t7d');
-                    console.log('About content elements found:', aboutContent.length);
-                    console.log('About content visible:', Array.from(aboutContent).some(el => el.offsetParent !== null));
-                    
-                    // Log DOM structure
-                    console.log('Parent container structure:', 
-                        document.querySelector('button[aria-label^="About"]')?.closest('[role="tablist"]')?.innerHTML
-                    );
-                };
-
-                // Log initial state
-                console.log('Initial DOM state:');
-                logDOMState();
-
-                // Watch for DOM changes
-                const observer = new MutationObserver((mutations) => {
-                    console.log('DOM mutation detected:', mutations.length, 'changes');
-                    logDOMState();
-                });
-
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true,
-                    attributes: true
-                });
+            // Wait for the About tab
+            const aboutTabSelector = 'button[aria-label="About"]';
+            await page.waitForSelector(aboutTabSelector, {
+                visible: true,
+                timeout: 30000
             });
-
-            // Wait for About tab with debugging
-            console.log('Attempting to locate About tab button...');
-            const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', {
-                timeout: 30000,
-                visible: true
-            });
-            console.log('Successfully found About tab button');
-
-            // Enhanced click handling with multiple promises
-            console.log('Attempting to click About tab...');
-            try {
-                await Promise.all([
-                    page.click('button[aria-label^="About"][role="tab"]'),
-                    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => {}),
-                    page.waitForResponse(response => response.url().includes('about')).catch(() => {})
-                ]);
-                console.log('Successfully clicked About tab and waited for response');
-            } catch (clickError) {
-                console.error('Error during About tab click:', clickError);
-            }
-
-            // Wait for content with debugging
-            console.log('Waiting for About content to load...');
-            await page.waitForFunction(() => {
-                const selectors = [
-                    'div[aria-label^="About"]',
-                    'div.iP2t7d.fontBodyMedium',
-                    'div[role="tabpanel"][aria-label^="About"]'
-                ];
-                return selectors.some(selector => document.querySelector(selector));
-            }, { timeout: 30000 });
-
-            // Extract content with debugging
-            const subsections = await page.evaluate(() => {
-                console.log('Starting content extraction...');
-                const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
-                console.log(`Found ${sections.length} subsections`);
-                
-                return Array.from(sections).map((section, index) => {
-                    const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                    const items = Array.from(section.querySelectorAll('li.hpLkke span'));
-                    
-                    const result = {
-                        title: titleElement?.textContent || '',
-                        items: items.map(item => item.textContent || '').filter(Boolean)
-                    };
-                    
-                    console.log(`Processed subsection ${index}:`, {
-                        title: result.title,
-                        itemCount: result.items.length
+            
+            // Click and wait for content load
+            await Promise.all([
+                page.click(aboutTabSelector),
+                // Wait for network to be idle
+                page.waitForNetworkIdle({ timeout: 30000 }),
+                // Additional wait for dynamic content
+                page.waitForTimeout(5000)
+            ]);
+        
+            // Try alternative selectors for content
+            const contentSelectors = [
+                '.RcCsl button[aria-label="About"]',  // New selector
+                'div[role="tabpanel"]:not([hidden])', // Any visible tabpanel
+                'div[jscontroller] div.iP2t7d',       // Dynamic content container
+                '.section-layout-root'                 // Root container
+            ];
+        
+            let contentFound = false;
+            for (const selector of contentSelectors) {
+                try {
+                    await page.waitForSelector(selector, {
+                        visible: true,
+                        timeout: 10000
                     });
-                    
-                    return result;
-                }).filter(section => section.title && section.items.length > 0);
-            });
-
-            // Process extracted content
-            subsections.forEach(({ title, items }) => {
-                if (title && items.length > 0) {
-                    console.log(`Adding subsection: ${title} with ${items.length} items`);
-                    about[title] = items;
+                    contentFound = true;
+                    console.log(`Content found with selector: ${selector}`);
+                    break;
+                } catch (err) {
+                    console.log(`Selector failed: ${selector}`);
+                    continue;
                 }
+            }
+        
+            if (!contentFound) {
+                throw new Error('No content selectors found');
+            }
+        
+            // Extract content with a more robust approach
+            const aboutContent = await page.evaluate(() => {
+                // Helper function to get text content safely
+                const getTextContent = (element) => element?.textContent?.trim() || '';
+                
+                // Find all content sections
+                const sections = Array.from(document.querySelectorAll('div[role="tabpanel"]:not([hidden]) div'));
+                
+                const result = {};
+                let currentSection = '';
+                
+                sections.forEach(section => {
+                    // Check if this is a section header
+                    const headerText = getTextContent(section.querySelector('h2, h3, .fontTitleSmall'));
+                    if (headerText) {
+                        currentSection = headerText;
+                        result[currentSection] = [];
+                    } 
+                    // Check for list items or content
+                    else {
+                        const items = Array.from(section.querySelectorAll('li, .fontBodyMedium > div'))
+                            .map(item => getTextContent(item))
+                            .filter(text => text.length > 0);
+                        
+                        if (items.length > 0 && currentSection) {
+                            result[currentSection].push(...items);
+                        }
+                    }
+                });
+        
+                return result;
             });
-
+        
+            about = aboutContent;
+            console.log('Extracted about content:', about);
+        
         } catch (err) {
-            console.error('Critical error in About section scraping:', {
+            console.error('Error in About section scraping:', {
                 message: err.message,
                 stack: err.stack,
                 phase: 'about-tab-scraping',
-                aboutObject: about,
                 timestamp: new Date().toISOString()
             });
         }
-
         return {
             url,
             title: titleName,
