@@ -31,6 +31,7 @@ const encodeUrl = async (url) => {
 const scrapeAbout = async (inputUrl) => {
     let browser = null;
     const url = await encodeUrl(inputUrl);
+    console.log('Starting scrape for URL:', url);
 
     try {
         browser = await puppeteer.launch({
@@ -47,117 +48,121 @@ const scrapeAbout = async (inputUrl) => {
                 process.env.NODE_ENV === "production"
                     ? process.env.PUPPETEER_EXECUTABLE_PATH
                     : puppeteer.executablePath(),
-            headless: "new",  // Added this for better stability
-            timeout: 60000,
+            headless: true, // Using true instead of "new" for v19.7.2
         });
 
         const page = await browser.newPage();
         
-        // Increase timeouts
-        page.setDefaultNavigationTimeout(60000);
-        page.setDefaultTimeout(60000);
-
-        // Enable console logs from the page
+        // Add console logging
         page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+        
+        // Set viewport
+        await page.setViewport({ width: 1280, height: 800 });
 
-        // Optimize performance
-        await page.setRequestInterception(true);
-        page.on('request', (request) => {
-            const blockedResources = ['image', 'stylesheet', 'font', 'media'];
-            if (blockedResources.includes(request.resourceType())) {
-                request.abort();
-            } else {
-                request.continue();
+        console.log('Navigating to page...');
+        await page.goto(url, { 
+            waitUntil: "networkidle0",
+            timeout: 30000 
+        });
+
+        // Wait for initial page load
+        await page.waitForTimeout(3000);
+
+        console.log('Looking for About button...');
+        // Wait for the About button
+        await page.waitForSelector('button[role="tab"][aria-label*="About"]', {
+            visible: true,
+            timeout: 10000
+        });
+
+        // Click the About button using plain JavaScript click()
+        console.log('Clicking About button...');
+        await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button[role="tab"]'));
+            const aboutButton = buttons.find(button => 
+                button.getAttribute('aria-label') && 
+                button.getAttribute('aria-label').includes('About')
+            );
+            if (aboutButton) {
+                aboutButton.click();
             }
         });
 
-        // Navigate with retries
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                await page.goto(url, { 
-                    waitUntil: "networkidle0",
-                    timeout: 60000 
-                });
-                break;
-            } catch (error) {
-                console.log(`Navigation error: ${error.message}`);
-                retries--;
-                if (retries === 0) throw error;
-                console.log(`Retrying navigation... ${retries} attempts left`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-        }
+        // Wait for the content to load
+        console.log('Waiting for content to load...');
+        await page.waitForTimeout(2000);
 
-        // Scrape About Tab
-        let about = {};
-        try {
-            // Wait for tab to be ready
-            await page.waitForFunction(
-                () => document.querySelector('button[aria-label^="About"][role="tab"]') !== null,
-                { timeout: 30000 }
-            );
+        // Extract data with detailed logging
+        console.log('Extracting data...');
+        const about = await page.evaluate(() => {
+            const result = {};
+            console.log('Starting data extraction...');
 
-            // Click the About tab and wait for content
-            await Promise.all([
-                page.click('button[aria-label^="About"][role="tab"]'),
-                page.waitForTimeout(3000)  // Increased wait time
-            ]);
+            // Find all section containers
+            const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
+            console.log(`Found ${sections.length} sections`);
 
-            // Verify the tab switch
-            await page.waitForFunction(
-                () => document.querySelector('div[role="tabpanel"][aria-label^="About"]') !== null,
-                { timeout: 20000 }
-            );
+            sections.forEach((section, index) => {
+                // Get section title
+                const titleEl = section.querySelector('h2.iL3Qke');
+                if (!titleEl) {
+                    console.log(`No title found for section ${index}`);
+                    return;
+                }
 
-            // Extract data using evaluate for better performance
-            const subsections = await page.evaluate(() => {
-                const sections = Array.from(document.querySelectorAll('div.iP2t7d.fontBodyMedium'));
-                return sections.map(section => {
-                    const titleEl = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                    const items = Array.from(section.querySelectorAll('li.hpLkke span'));
-                    
-                    return {
-                        title: titleEl ? titleEl.textContent.trim() : '',
-                        items: items
-                            .map(item => item.textContent.trim())
-                            .filter(text => text.length > 0)
-                    };
-                }).filter(section => section.title && section.items.length > 0);
-            });
+                const title = titleEl.textContent.trim();
+                console.log(`Processing section: ${title}`);
 
-            // Process the results
-            subsections.forEach(({ title, items }) => {
-                if (title && items.length > 0) {
-                    about[title] = items;
+                // Get all items
+                const items = Array.from(section.querySelectorAll('li.hpLkke span[aria-label]'))
+                    .map(span => span.getAttribute('aria-label'))
+                    .filter(text => text && text.length > 0);
+
+                console.log(`Found ${items.length} items in section ${title}`);
+                
+                if (items.length > 0) {
+                    result[title] = items;
                 }
             });
 
-            // Log the results for debugging
-            console.log('Scraped data:', JSON.stringify(about, null, 2));
+            console.log('Extraction complete');
+            return result;
+        });
 
-            if (Object.keys(about).length === 0) {
-                console.log('Warning: No data was scraped');
-            }
+        // Log the results
+        console.log('Scraped data:', JSON.stringify(about, null, 2));
 
-        } catch (err) {
-            console.error("Error in about section scraping:", err);
-            throw err;  // Rethrow to trigger retry if needed
+        // Take a screenshot for debugging if no data
+        if (Object.keys(about).length === 0) {
+            console.log('No data found, taking screenshot...');
+            await page.screenshot({ path: 'debug-screenshot.png' });
+            
+            // Try to get page content for debugging
+            const pageContent = await page.content();
+            console.log('Page content length:', pageContent.length);
+            console.log('First 500 chars of page:', pageContent.substring(0, 500));
         }
 
+        await browser.close();
         return { about };
 
     } catch (error) {
         console.error(`Scraping error: ${error.message}`);
-        throw new Error(`Error scraping POI data: ${error.message}`);
-    } finally {
-        if (browser) {
-            try {
-                await browser.close();
-            } catch (error) {
-                console.error("Error closing browser:", error);
+        console.error(error.stack);
+        
+        // Try to take error screenshot
+        try {
+            if (page) {
+                await page.screenshot({ path: 'error-screenshot.png' });
             }
+        } catch (screenshotError) {
+            console.error('Failed to take error screenshot:', screenshotError.message);
         }
+
+        if (browser) {
+            await browser.close();
+        }
+        throw error;
     }
 };
 
