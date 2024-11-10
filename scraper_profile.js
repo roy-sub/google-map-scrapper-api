@@ -28,101 +28,58 @@ const encodeUrl = async (url) => {
     return query ? `${encodedBaseUrl}?${query}` : encodedBaseUrl;
 };
 
-const waitForSelector = async (page, selector, timeout = 30000) => {
+const setupBrowser = async () => {
+    const options = {
+        headless: "new",
+        args: [
+            "--disable-setuid-sandbox",
+            "--no-sandbox",
+            "--single-process",
+            "--no-zygote",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--ignore-certificate-errors",
+            "--window-size=1920,1080",
+        ],
+        executablePath:
+            process.env.NODE_ENV === "production"
+                ? process.env.PUPPETEER_EXECUTABLE_PATH
+                : puppeteer.executablePath(),
+        defaultViewport: {
+            width: 1920,
+            height: 1080
+        },
+        timeout: 60000,
+    };
+
     try {
-        return await page.waitForSelector(selector, { 
-            timeout,
-            visible: true 
-        });
-    } catch (err) {
-        console.log(`Timeout waiting for selector: ${selector}`);
-        return null;
-    }
-};
-
-const scrapeAboutSection = async (page) => {
-    try {
-        // First ensure we're on the about tab
-        const aboutTab = await waitForSelector(page, 'button[aria-label^="About"][role="tab"]');
-        if (!aboutTab) {
-            console.log("About tab not found");
-            return {};
-        }
-
-        // Click the About tab and wait for content
-        await aboutTab.click();
-        await page.waitForTimeout(3000); // Increased wait time for content load
-
-        // Evaluate the about section content
-        const about = await page.evaluate(() => {
-            const result = {};
-            
-            // Find all section containers
-            const sections = document.querySelectorAll('.iP2t7d.fontBodyMedium');
-            
-            sections.forEach(section => {
-                // Get section title
-                const titleEl = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                if (!titleEl) return;
-                
-                const title = titleEl.textContent.trim();
-                if (!title) return;
-                
-                // Get section items
-                const items = Array.from(section.querySelectorAll('li.hpLkke span'))
-                    .map(item => item.textContent.trim())
-                    .filter(Boolean);
-                
-                if (items.length > 0) {
-                    result[title] = items;
-                }
-            });
-            
-            return result;
-        });
-
-        return about;
-    } catch (err) {
-        console.error("Error in scrapeAboutSection:", err.message);
-        return {};
+        return await puppeteer.launch(options);
+    } catch (error) {
+        console.error("Browser launch error:", error);
+        throw error;
     }
 };
 
 const scrapePoi = async (inputUrl) => {
     let browser = null;
-    const url = await encodeUrl(inputUrl);
-
+    let page = null;
+    
     try {
-        browser = await puppeteer.launch({
-            headless: "new", // Use new headless mode
-            args: [
-                "--disable-setuid-sandbox",
-                "--no-sandbox",
-                "--single-process",
-                "--no-zygote",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                '--window-size=1920,1080',
-            ],
-            executablePath:
-                process.env.NODE_ENV === "production"
-                    ? process.env.PUPPETEER_EXECUTABLE_PATH
-                    : puppeteer.executablePath(),
-            defaultViewport: {
-                width: 1920,
-                height: 1080
-            },
-            timeout: 60000,
-        });
+        const url = await encodeUrl(inputUrl);
+        browser = await setupBrowser();
+        page = await browser.newPage();
 
-        const page = await browser.newPage();
-        
-        // Set longer timeouts
-        page.setDefaultNavigationTimeout(60000);
-        page.setDefaultTimeout(60000);
+        // Set up page configurations
+        await Promise.all([
+            page.setDefaultNavigationTimeout(60000),
+            page.setDefaultTimeout(60000),
+            page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'),
+        ]);
 
-        // Enable request interception for performance
+        // Minimal request interception
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             if (['image', 'stylesheet', 'font'].includes(request.resourceType())) {
@@ -132,87 +89,108 @@ const scrapePoi = async (inputUrl) => {
             }
         });
 
-        // Add retry mechanism for navigation
-        let retries = 3;
-        let lastError;
-        
-        while (retries > 0) {
+        // Navigation with retries
+        let loaded = false;
+        for (let i = 0; i < 3 && !loaded; i++) {
             try {
                 await page.goto(url, { 
-                    waitUntil: "networkidle0",
-                    timeout: 60000 
+                    waitUntil: ["domcontentloaded", "networkidle2"],
+                    timeout: 30000 
                 });
-                break;
+                loaded = true;
             } catch (error) {
-                lastError = error;
-                retries--;
-                if (retries === 0) break;
-                console.log(`Retrying navigation... ${retries} attempts left`);
-                await page.waitForTimeout(5000);
+                console.log(`Navigation attempt ${i + 1} failed:`, error.message);
+                if (i === 2) throw error;
+                await page.waitForTimeout(2000);
             }
         }
 
-        if (retries === 0 && lastError) {
-            throw lastError;
-        }
-
-        // Wait for main content to load
+        // Wait for critical content
         await page.waitForTimeout(2000);
 
-        // Basic information scraping with proper error handling
+        // Scrape basic information
         const basicInfo = await page.evaluate(() => {
-            const getValue = (selector, attribute = null) => {
-                const element = document.querySelector(selector);
-                if (!element) return '';
-                return attribute ? element.getAttribute(attribute) : element.textContent.trim();
-            };
+            try {
+                return {
+                    title: document.querySelector('h1.DUwDvf')?.textContent?.trim() || '',
+                    description: document.querySelector('h2.bwoZTb.fontBodyMedium span')?.textContent?.trim() || '',
+                    category: document.querySelector('button.DkEaL')?.textContent?.trim() || '',
+                    address: document.querySelector('button[aria-label^="Address"]')?.getAttribute('aria-label')?.split(': ')?.[1] || '',
+                    openHours: document.querySelector('.t39EBf.GUrTXd')?.getAttribute('aria-label') || '',
+                    websiteLink: document.querySelector('a[aria-label^="Website"]')?.href || '',
+                    phoneNumber: document.querySelector('button[aria-label^="Phone"]')?.textContent?.split('\n')?.pop() || '',
+                };
+            } catch (error) {
+                console.error('Error in basic info scraping:', error);
+                return {};
+            }
+        });
 
-            return {
-                title: getValue('h1.DUwDvf'),
-                description: getValue('h2.bwoZTb.fontBodyMedium span'),
-                category: getValue('button.DkEaL'),
-                address: getValue('button[aria-label^="Address"]', 'aria-label')?.split(': ')[1] || '',
-                openHours: getValue('.t39EBf.GUrTXd', 'aria-label'),
-                websiteLink: getValue('a[aria-label^="Website"]', 'href'),
-                phoneNumber: getValue('button[aria-label^="Phone"]')?.split('\n').pop() || '',
-            };
+        // Scrape rating and reviews count
+        const ratingData = await page.evaluate(() => {
+            try {
+                const ratingEl = document.querySelector('.LBgpqf .fontBodyMedium .F7nice span span[aria-hidden="true"]');
+                const reviewsEl = document.querySelector('.LBgpqf .fontBodyMedium .F7nice span span[aria-label*="reviews"]');
+                
+                return {
+                    rating: ratingEl?.textContent || null,
+                    reviews: reviewsEl?.textContent?.match(/\d+/)?.[0] || null
+                };
+            } catch (error) {
+                console.error('Error in rating scraping:', error);
+                return { rating: null, reviews: null };
+            }
         });
 
         // Scrape reviews
         const reviews = await page.evaluate(() => {
-            const reviewsList = [];
-            
-            // Try multiple selectors for reviews
-            const selectors = [
-                '.DUGVrf [jslog*="track:click"]',
-                '.wiI7pd'
-            ];
-            
-            selectors.forEach(selector => {
-                document.querySelectorAll(selector).forEach(el => {
-                    const text = selector.includes('DUGVrf') 
-                        ? el.getAttribute('aria-label')?.match(/"([^"]*)"/)?.[1]
-                        : el.textContent;
+            try {
+                const reviewsList = [];
+                const reviewElements = Array.from(document.querySelectorAll('.DUGVrf [jslog*="track:click"], .wiI7pd'));
+                
+                reviewElements.forEach(el => {
+                    const text = el.getAttribute('aria-label')?.match(/"([^"]*)"/)?.[1] || el.textContent?.trim();
                     if (text) reviewsList.push(text);
                 });
-            });
-            
-            return reviewsList;
+                
+                return reviewsList;
+            } catch (error) {
+                console.error('Error in reviews scraping:', error);
+                return [];
+            }
         });
 
         // Scrape about section
-        const about = await scrapeAboutSection(page);
+        let about = {};
+        try {
+            const aboutTab = await page.$('button[aria-label^="About"][role="tab"]');
+            if (aboutTab) {
+                await aboutTab.click();
+                await page.waitForTimeout(2000);
 
-        // Get rating and reviews count
-        const ratingData = await page.evaluate(() => {
-            const ratingEl = document.querySelector('.LBgpqf .fontBodyMedium .F7nice span span[aria-hidden="true"]');
-            const reviewsEl = document.querySelector('.LBgpqf .fontBodyMedium .F7nice span span[aria-label*="reviews"]');
-            
-            return {
-                rating: ratingEl?.textContent || null,
-                reviews: reviewsEl?.textContent.match(/\d+/)?.[0] || null
-            };
-        });
+                about = await page.evaluate(() => {
+                    const result = {};
+                    const sections = document.querySelectorAll('.iP2t7d.fontBodyMedium');
+                    
+                    sections.forEach(section => {
+                        const title = section.querySelector('h2.iL3Qke.fontTitleSmall')?.textContent?.trim();
+                        if (!title) return;
+                        
+                        const items = Array.from(section.querySelectorAll('li.hpLkke span'))
+                            .map(item => item.textContent?.trim() || '')
+                            .filter(Boolean);
+                        
+                        if (items.length > 0) {
+                            result[title] = items;
+                        }
+                    });
+                    
+                    return result;
+                });
+            }
+        } catch (error) {
+            console.error('Error in about section scraping:', error);
+        }
 
         return {
             url,
@@ -230,9 +208,12 @@ const scrapePoi = async (inputUrl) => {
         };
 
     } catch (error) {
-        console.error(`Error scraping POI data:`, error);
+        console.error('Scraping error:', error);
         throw error;
     } finally {
+        if (page) {
+            await page.close().catch(console.error);
+        }
         if (browser) {
             await browser.close().catch(console.error);
         }
