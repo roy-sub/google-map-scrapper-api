@@ -1,5 +1,5 @@
-require("dotenv").config();
 const puppeteer = require('puppeteer');
+require("dotenv").config();
 
 const encodeUrl = async (url) => {
     let baseUrl, query;
@@ -27,117 +27,148 @@ const encodeUrl = async (url) => {
     return query ? `${encodedBaseUrl}?${query}` : encodedBaseUrl;
 };
 
-const waitForSelector = async (page, selector, timeout = 5000) => {
+async function createBrowser() {
+    return await puppeteer.launch({
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
+            '--window-size=1920,1080',
+        ],
+        headless: "new",
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+        ignoreHTTPSErrors: true,
+    });
+}
+
+async function createPage(browser) {
+    const page = await browser.newPage();
+    
+    // Set viewport
+    await page.setViewport({
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1,
+    });
+    
+    // Set user agent
+    await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    
+    // Set extra headers
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    });
+    
+    return page;
+}
+
+const waitForSelectorSafely = async (page, selector, timeout = 10000) => {
     try {
         return await page.waitForSelector(selector, { timeout });
     } catch (error) {
-        console.warn(`Timeout waiting for selector: ${selector}`);
         return null;
     }
 };
 
-const scrapeAbout = async (inputUrl, retryCount = 2) => {
+const scrapeAbout = async (inputUrl) => {
     const url = await encodeUrl(inputUrl);
     let browser = null;
-    
+    let page = null;
+
     try {
-        browser = await puppeteer.launch({
-            args: [
-                "--disable-setuid-sandbox",
-                "--no-sandbox",
-                "--single-process",
-                "--no-zygote",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-infobars",
-                "--window-position=0,0",
-                "--ignore-certifcate-errors",
-                "--ignore-certifcate-errors-spki-list",
-                "--disable-accelerated-2d-canvas",
-                "--hide-scrollbars",
-                "--disable-web-security"
-            ],
-            headless: "new",
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-            ignoreHTTPSErrors: true,
+        console.log('Launching browser...');
+        browser = await createBrowser();
+        
+        console.log('Creating page...');
+        page = await createPage(browser);
+        
+        // Set longer timeouts
+        page.setDefaultNavigationTimeout(90000);
+        page.setDefaultTimeout(90000);
+
+        console.log('Navigating to URL:', url);
+        await page.goto(url, {
+            waitUntil: ['domcontentloaded', 'networkidle2'],
+            timeout: 90000
         });
 
-        const page = await browser.newPage();
+        // Wait for page to stabilize
+        console.log('Waiting for page to stabilize...');
+        await page.waitForFunction(
+            () => document.readyState === 'complete',
+            { timeout: 60000 }
+        );
         
-        // Set a longer timeout for the entire navigation
-        await page.setDefaultNavigationTimeout(60000);
-        
-        // Set viewport and user agent
-        await page.setViewport({ width: 1280, height: 800 });
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        
-        // Set additional headers
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        });
-
-        // Enable JavaScript and cookies
-        await page.setJavaScriptEnabled(true);
-        
-        // Navigate with retry logic
-        let navigationSuccess = false;
-        for (let attempt = 0; attempt < retryCount && !navigationSuccess; attempt++) {
-            try {
-                await page.goto(url, {
-                    waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 60000
-                });
-                navigationSuccess = true;
-            } catch (error) {
-                console.warn(`Navigation attempt ${attempt + 1} failed:`, error.message);
-                if (attempt === retryCount - 1) throw error;
-                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
-            }
-        }
-
-        // Wait for page to be fully loaded
-        await page.waitForFunction(() => document.readyState === 'complete');
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Additional wait for dynamic content
+        // Additional wait for dynamic content
+        await new Promise(r => setTimeout(r, 5000));
 
         let about = {};
-        try {
-            // Wait for and click the About tab
-            const aboutTab = await waitForSelector(page, 'button[aria-label^="About"][role="tab"]', 15000);
-            if (aboutTab) {
-                await aboutTab.click();
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for content to load
-                
-                // Wait for About section
-                const aboutSection = await waitForSelector(page, 'div[aria-label^="About"]', 15000);
-                if (aboutSection) {
-                    const subsections = await page.evaluate(() => {
-                        const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
-                        return Array.from(sections).map(section => ({
-                            title: section.querySelector('h2.iL3Qke.fontTitleSmall')?.textContent || 'Unknown',
-                            items: Array.from(section.querySelectorAll('li.hpLkke span')).map(item => item.textContent)
-                        }));
-                    });
+        
+        console.log('Looking for About tab...');
+        const aboutTabSelector = 'button[aria-label^="About"][role="tab"]';
+        const aboutTab = await waitForSelectorSafely(page, aboutTabSelector, 15000);
+
+        if (aboutTab) {
+            console.log('Found About tab, clicking...');
+            await aboutTab.evaluate(b => b.click());
+            
+            // Wait after clicking
+            await new Promise(r => setTimeout(r, 3000));
+
+            console.log('Looking for About section...');
+            const aboutSectionSelector = 'div[aria-label^="About"]';
+            const aboutSection = await waitForSelectorSafely(page, aboutSectionSelector, 15000);
+
+            if (aboutSection) {
+                console.log('Found About section, extracting data...');
+                about = await page.evaluate(() => {
+                    const data = {};
+                    const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
                     
-                    subsections.forEach(({ title, items }) => {
-                        if (title && items.length > 0) {
-                            about[title] = items;
+                    sections.forEach(section => {
+                        const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
+                        const items = section.querySelectorAll('li.hpLkke span');
+                        
+                        if (titleElement && items.length > 0) {
+                            const title = titleElement.textContent;
+                            data[title] = Array.from(items).map(item => item.textContent);
                         }
                     });
-                }
+                    
+                    return data;
+                });
+            } else {
+                console.log('About section not found');
+                about = { error: 'About section not found' };
             }
-        } catch (err) {
-            console.warn('About section scraping failed:', err.message);
-            about = { error: 'Failed to scrape about section', message: err.message };
+        } else {
+            console.log('About tab not found');
+            about = { error: 'About tab not found' };
         }
 
-        return { about };
+        console.log('Scraping completed successfully');
+        return { about, status: 'success' };
+
     } catch (error) {
         console.error('Scraping error:', error);
-        throw new Error(`Error scraping POI data: ${error.message}`);
+        throw new Error(`Scraping failed: ${error.message}`);
     } finally {
-        if (browser) {
-            await browser.close();
+        try {
+            if (page) {
+                console.log('Closing page...');
+                await page.close();
+            }
+            if (browser) {
+                console.log('Closing browser...');
+                await browser.close();
+            }
+        } catch (closeError) {
+            console.error('Error during cleanup:', closeError);
         }
     }
 };
