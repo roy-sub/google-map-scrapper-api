@@ -197,12 +197,12 @@ const scrapePoi = async (inputUrl) => {
         // 11. Profile Photo
         let profilePictureUrl = '';
         try {
-            // Wait for the button with multiple classes
-            await page.waitForSelector('button.aoRNLd.kn2E5e.NMjTrf.lvtCsd', { timeout: 30000 });
+            // Wait for button using a single class name
+            await page.waitForSelector('button.aoRNLd', { timeout: 30000 });
             
-            // Get the profile picture URL using a more specific evaluate call
+            // Get the profile picture URL
             profilePictureUrl = await page.evaluate(() => {
-                const button = document.querySelector('button.aoRNLd.kn2E5e.NMjTrf.lvtCsd');
+                const button = document.querySelector('button.aoRNLd');
                 if (!button) return '';
                 
                 const img = button.querySelector('img');
