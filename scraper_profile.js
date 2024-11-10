@@ -177,34 +177,31 @@ const scrapePoi = async (inputUrl) => {
         // 10. Scrape Reviews
         let reviews = [];
         try {
-            await page.waitForSelector('.DUGVrf [jslog*="track:click"]', { timeout: 30000 });
             const reviewElements = await page.$$eval('.DUGVrf [jslog*="track:click"]', (els) =>
                 els.map((el) => el.getAttribute('aria-label'))
             );
             for (const reviewText of reviewElements) {
-                const review = reviewText.match(/"([^"]*)"/)?.[1];
-                if (review) reviews.push(review);
+                const review = reviewText.match(/"([^"]*)"/)[1];
+                reviews.push(review);
             }
         } catch (err) {
-            console.log("Error getting reviews (first method):", err.message);
+            // No-op
         }
-        
         try {
-            await page.waitForSelector('.wiI7pd', { timeout: 30000 });
-            const additionalReviews = await page.$$eval('.wiI7pd', (els) => els.map((el) => el.textContent));
-            reviews = [...reviews, ...additionalReviews];
+            const reviewElements = await page.$$eval('.wiI7pd', (els) => els.map((el) => el.textContent));
+            reviews = [...reviews, ...reviewElements];
         } catch (err) {
-            console.log("Error getting reviews (second method):", err.message);
+            // No-op
         }
 
         // 11. Profile Photo
         let profilePictureUrl = '';
         try {
-            const profilePictureButton = await page.waitForSelector('button.aoRNLd[aria-label^="Photo of"]', { timeout: 30000 });
+            const profilePictureButton = await page.$('button.aoRNLd[aria-label^="Photo of"]');
             const imgElement = await profilePictureButton.$('img');
             profilePictureUrl = await page.evaluate((el) => el.getAttribute('src'), imgElement);
         } catch (err) {
-            console.log("Error getting profile picture:", err.message);
+            // No-op
         }
 
         // 12. Scrape About Tab
@@ -212,23 +209,23 @@ const scrapePoi = async (inputUrl) => {
         try {
             const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { timeout: 10000 });
             await aboutTab.click();
-            await page.waitForTimeout(2000); // Wait for content to load
 
-            const aboutSection = await page.waitForSelector('div[aria-label^="About"]', { timeout: 10000 });
-            
-            const subsections = await page.evaluate(() => {
-                const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
-                return Array.from(sections).map(section => ({
-                    title: section.querySelector('h2.iL3Qke.fontTitleSmall')?.textContent || '',
-                    items: Array.from(section.querySelectorAll('li.hpLkke span')).map(item => item.textContent)
-                }));
-            });
+            await page.waitForSelector('div[aria-label^="About"]', { timeout: 10000 });
+
+            const aboutSection = await page.$('div[aria-label^="About"]');
+
+            const subsections = await aboutSection.$$eval('div.iP2t7d.fontBodyMedium', (els) =>
+                els.map((el) => ({
+                    title: el.querySelector('h2.iL3Qke.fontTitleSmall').textContent,
+                    items: Array.from(el.querySelectorAll('li.hpLkke span')).map((i) => i.textContent)
+                }))
+            );
 
             subsections.forEach(({ title, items }) => {
-                if (title) about[title] = items;
+                about[title] = items;
             });
         } catch (err) {
-            console.log("Error getting about section:", err.message);
+            // No-op
         }
 
         return {
