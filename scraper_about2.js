@@ -67,7 +67,7 @@ const scrapeAbout2 = async (inputUrl) => {
             }
         });
 
-        // Add retry mechanism for navigation
+        // Retry mechanism for navigation
         let retries = 3;
         while (retries > 0) {
             try {
@@ -87,23 +87,23 @@ const scrapeAbout2 = async (inputUrl) => {
         // Scrape About Tab
         let about = {};
         try {
-            // Wait for the About tab with increased timeout
+            // Wait for the About tab
             const aboutTab = await page.waitForSelector('button[aria-label^="About"][role="tab"]', { 
                 timeout: 30000,
                 visible: true 
             });
         
-            // Click the About tab and wait for navigation
+            // Click the About tab and wait briefly
             await Promise.all([
                 aboutTab.click(),
-                page.waitForTimeout(2000) // Give some time for content to load
+                page.waitForTimeout(2000) // Wait for content to load
             ]);
         
             // Try multiple selectors for the About section
             const aboutSelectors = [
                 'div[aria-label^="About"]',
                 'div.iP2t7d.fontBodyMedium',
-                'div[role="tabpanel"][aria-label^="About"]'
+                'div[role="region"][aria-label^="About"]'
             ];
         
             let aboutSection = null;
@@ -120,15 +120,15 @@ const scrapeAbout2 = async (inputUrl) => {
             }
         
             if (aboutSection) {
-                // Use a single evaluate call to get all subsections
+                // Capture subsections in the About section
                 const subsections = await page.evaluate(() => {
                     const sections = document.querySelectorAll('div.iP2t7d.fontBodyMedium');
                     return Array.from(sections).map(section => {
                         const titleElement = section.querySelector('h2.iL3Qke.fontTitleSmall');
-                        const items = Array.from(section.querySelectorAll('li.hpLkke span'));
+                        const items = Array.from(section.querySelectorAll('li.hpLkke span[aria-label]'));
                         return {
                             title: titleElement?.textContent || '',
-                            items: items.map(item => item.textContent || '').filter(Boolean)
+                            items: items.map(item => item.getAttribute('aria-label') || '').filter(Boolean)
                         };
                     }).filter(section => section.title && section.items.length > 0);
                 });
