@@ -47,7 +47,7 @@ app.get("/about", async (req, res) => {
       return res.status(400).send("Error: input url is required");
     }
 
-    const data = await scrapePoi_Debug(url);
+    const data = await scrapeAbout(url);
     res.json(data);
   } catch (error) {
     const errorMessage = `Error: ${error.message}`;
